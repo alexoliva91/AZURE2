@@ -252,14 +252,14 @@ void SegmentsTab::addSegDataLine() {
     SegmentsDataData newLine;
     newLine.isActive=1;
     newLine.entrancePairIndex=aDialog.entrancePairIndexSpin->value();
-    if(aDialog.dataTypeCombo->currentIndex()==3)
+    if(aDialog.dataTypeCombo->currentData().toInt()==3)
       newLine.exitPairIndex=-1;
     else newLine.exitPairIndex=aDialog.exitPairIndexSpin->value();
     newLine.lowEnergy=aDialog.lowEnergyText->text().toDouble();
     newLine.highEnergy=aDialog.highEnergyText->text().toDouble();
     newLine.lowAngle=aDialog.lowAngleText->text().toDouble();
     newLine.highAngle=aDialog.highAngleText->text().toDouble();
-    newLine.dataType=aDialog.dataTypeCombo->currentIndex();
+    newLine.dataType=aDialog.dataTypeCombo->currentData().toInt();
     newLine.isTHM=aDialog.thmCheck->isChecked() ? 1 : 0;
     newLine.dataFile=aDialog.dataFileText->text();
     newLine.dataNorm=aDialog.dataNormText->text().toDouble();
@@ -368,7 +368,7 @@ void SegmentsTab::addSegTestLine() {
     SegmentsTestData newLine;
     newLine.isActive=1;
     newLine.entrancePairIndex=aDialog.entrancePairIndexSpin->value();
-    if(aDialog.dataTypeCombo->currentIndex()==4)
+    if(aDialog.dataTypeCombo->currentData().toInt()==4)
       newLine.exitPairIndex=-1;
     else newLine.exitPairIndex=aDialog.exitPairIndexSpin->value();
     newLine.lowEnergy=aDialog.lowEnergyText->text().toDouble();
@@ -377,7 +377,7 @@ void SegmentsTab::addSegTestLine() {
     newLine.lowAngle=aDialog.lowAngleText->text().toDouble();
     newLine.highAngle=aDialog.highAngleText->text().toDouble();
     newLine.angleStep=aDialog.angleStepText->text().toDouble();
-    newLine.dataType=aDialog.dataTypeCombo->currentIndex();
+    newLine.dataType=aDialog.dataTypeCombo->currentData().toInt();
     newLine.isTHM=aDialog.thmCheck->isChecked() ? 1 : 0;
     newLine.phaseJ=aDialog.phaseJValueText->text().toDouble();
     newLine.phaseL=aDialog.phaseLValueText->text().toInt();
@@ -531,8 +531,11 @@ void SegmentsTab::editSegDataLine() {
   aDialog.highEnergyText->setText(highEnergy);
   aDialog.lowAngleText->setText(lowAngle);
   aDialog.highAngleText->setText(highAngle);
-  aDialog.dataTypeCombo->setCurrentIndex(dataType);
+  // thmCheck must be set before the data type: it determines which options
+  // populateDataTypeOptions() offers, so setDataType() needs it set first
+  // to find the right entry.
   aDialog.thmCheck->setChecked(isTHM==1);
+  aDialog.setDataType(dataType);
   aDialog.dataFileText->setText(dataFile);
   aDialog.dataNormText->setText(dataNorm);
   aDialog.dataNormErrorText->setText(dataNormError);
@@ -571,7 +574,7 @@ void SegmentsTab::editSegDataLine() {
       i=segmentsDataModel->index(index.row(),1,QModelIndex());
       segmentsDataModel->setData(i,newEntrancePairIndex,Qt::EditRole);
     }
-    int newExitPairIndex= (aDialog.dataTypeCombo->currentIndex()==3) ? -1 :
+    int newExitPairIndex= (aDialog.dataTypeCombo->currentData().toInt()==3) ? -1 :
       aDialog.exitPairIndexSpin->value();
     if(newExitPairIndex!=exitPairIndex) {
       i=segmentsDataModel->index(index.row(),2,QModelIndex());
@@ -597,7 +600,7 @@ void SegmentsTab::editSegDataLine() {
       i=segmentsDataModel->index(index.row(),6,QModelIndex());
       segmentsDataModel->setData(i,newHighAngle,Qt::EditRole);
     }
-    int newDataType=aDialog.dataTypeCombo->currentIndex();
+    int newDataType=aDialog.dataTypeCombo->currentData().toInt();
     if(newDataType!=dataType) {
       i=segmentsDataModel->index(index.row(),7,QModelIndex());
       segmentsDataModel->setData(i,newDataType,Qt::EditRole);
@@ -767,8 +770,11 @@ void SegmentsTab::editSegTestLine() {
   aDialog.lowAngleText->setText(lowAngle);
   aDialog.highAngleText->setText(highAngle);
   aDialog.angleStepText->setText(angleStep);
-  aDialog.dataTypeCombo->setCurrentIndex(dataType);
+  // thmCheck must be set before the data type: it determines which options
+  // populateDataTypeOptions() offers, so setDataType() needs it set first
+  // to find the right entry.
   aDialog.thmCheck->setChecked(isTHM==1);
+  aDialog.setDataType(dataType);
   aDialog.phaseJValueText->setText(phaseJ);
   aDialog.phaseLValueText->setText(phaseL);
   aDialog.angDistSpin->setValue(maxAngDistOrder);
@@ -792,7 +798,7 @@ void SegmentsTab::editSegTestLine() {
       i=segmentsTestModel->index(index.row(),1,QModelIndex());
       segmentsTestModel->setData(i,newEntrancePairIndex,Qt::EditRole);
     }
-    int newExitPairIndex= (aDialog.dataTypeCombo->currentIndex()==4) ? -1 :
+    int newExitPairIndex= (aDialog.dataTypeCombo->currentData().toInt()==4) ? -1 :
       aDialog.exitPairIndexSpin->value();
     if(newExitPairIndex!=exitPairIndex) {
       i=segmentsTestModel->index(index.row(),2,QModelIndex());
@@ -828,7 +834,7 @@ void SegmentsTab::editSegTestLine() {
       i=segmentsTestModel->index(index.row(),8,QModelIndex());
       segmentsTestModel->setData(i,newAngleStep,Qt::EditRole);
     }
-    int newDataType = aDialog.dataTypeCombo->currentIndex();
+    int newDataType = aDialog.dataTypeCombo->currentData().toInt();
     if(newDataType!=dataType) {
       i=segmentsTestModel->index(index.row(),9,QModelIndex());
       segmentsTestModel->setData(i,newDataType,Qt::EditRole);

@@ -6,6 +6,7 @@
 #include <QTableView>
 #include <QSignalMapper>
 #include <QPointer>
+#include <QSet>
 #include "TargetIntModel.h"
 #include "AddTargetIntDialog.h"
 
@@ -17,6 +18,7 @@ class QLineEdit;
 QT_END_NAMESPACE
 
 class InfoDialog;
+class SegmentsTab;
 
 class TargetIntTab : public QWidget {
   Q_OBJECT
@@ -24,6 +26,9 @@ class TargetIntTab : public QWidget {
  public:
   TargetIntTab(QWidget *parent = 0);
   TargetIntModel* getTargetIntModel();
+  ///Gives the tab access to the segment definitions so that the experimental
+  ///effects dialog can tell which segment keys are THM segments.
+  void setSegmentsTab(SegmentsTab* segmentsTab);
   bool writeFile(QTextStream& outStream);
   bool readFile(QTextStream& inStream);
   void reset();
@@ -37,6 +42,12 @@ class TargetIntTab : public QWidget {
   void showInfo(int which=0,QString title="");
 
  private:
+  ///Segment keys (row numbers, as used in the segments list of a target
+  ///effect line) that belong to a THM segment, in either the data or the
+  ///test segment table.
+  QSet<int> thmSegmentKeys() const;
+
+  QPointer<SegmentsTab> segmentsTab_;
   TargetIntModel *targetIntModel;
   QTableView *targetIntView;
   QPushButton *addButton;

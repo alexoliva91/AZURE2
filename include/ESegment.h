@@ -31,6 +31,7 @@ class ESegment {
   bool IsInSegment(EPoint);
   bool IsDifferential() const;
   bool IsCMDifferential() const;
+  bool IsCMAngleIntegrated() const;
   bool IsPhase() const;
   ///Returns true if this is a THM (modified R-matrix, half-off-shell) segment.
   bool IsTHM() const;
@@ -108,6 +109,7 @@ class ESegment {
  private:
   bool isdifferential_;
   bool iscmdifferential_;
+  bool isCMAngleIntegrated_;
   bool isphase_;
   bool isTHM_;
   ///Which cross section component to compare against: 0 = full, 1 = E1 only, 2 = E2 only.

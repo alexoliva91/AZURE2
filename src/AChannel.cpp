@@ -109,6 +109,10 @@ void AChannel::SetWignerLimit(double reducedMass, double channelRadius) {
   }
   
   double reducedMassMeV = reducedMass * uconv; // Convert from u to MeV/c²
+  // Convention: hbar^2/(mu a^2), the single-particle theta^2 = 1 scale,
+  // deliberately used for the USE_WIGNER_LIMITS parameter bounds (CNuc.cpp).
+  // The Teichmann-Wigner sum-rule limit 3 hbar^2/(2 mu a^2) is 1.5x looser;
+  // this is the conservative choice.
   wigner_limit_ = pow(hbarc, 2.0) / (reducedMassMeV * pow(channelRadius, 2.0));
 }
 

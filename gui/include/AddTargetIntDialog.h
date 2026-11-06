@@ -2,6 +2,7 @@
 #define ADDTARGETINTDIALOG_H
 
 #include <QDialog>
+#include <QSet>
 #include <string>
 #include <vector>
 
@@ -16,6 +17,7 @@ class QGroupBox;
 class QSize;
 class QComboBox;
 class QPushButton;
+class QLabel;
 
 QT_END_NAMESPACE
 
@@ -56,9 +58,18 @@ class AddTargetIntDialog : public QDialog {
   void createParameterItem(int row, double value = 0.0);
   void createQCoefficientItem(int row, double value = 1.0);
   void createConvCoefficientItem(int row, double value = 1.0);
-  
+
+  ///Declares which segment keys belong to THM (half-off-shell) segments.
+  ///Whenever the segments list names one of them, every experimental effect
+  ///but the Gaussian convolution is switched off and disabled: a THM
+  ///measurement has no beam slowing down in a target, so target integration,
+  ///straggling and attenuation coefficients are meaningless for it (the
+  ///engine rejects them in EData::ReadTargetEffectsFile).
+  void setTHMSegmentKeys(const QSet<int>& keys);
+
  public slots:
   void convolutionCheckChanged(bool checked);
+  void segmentsListChanged(const QString& text);
 
   void targetIntCheckChanged(bool checked);
   void parameterSpinChanged(int newNumber);
@@ -77,6 +88,15 @@ class AddTargetIntDialog : public QDialog {
   void calculateDeltaE();
 
  private:
+  ///Switches the non-convolution effects on or off to match the current
+  ///segments list, and shows the explanatory notice while they are off.
+  void updateTHMRestrictions();
+  ///Expands a segments list of the form "1-3,5" into individual keys, using
+  ///the same syntax as TargetEffect::GetSegmentsList().
+  static QSet<int> parseSegmentsList(const QString& text);
+
+  QSet<int> thmSegmentKeys_;
+  QLabel *thmNoticeLabel;
   QPushButton *okButton;
   QPushButton *cancelButton;
   QGroupBox *stoppingPowerBox;

@@ -9,6 +9,7 @@
 
 #include "TargetIntTab.h"
 #include "InfoDialog.h"
+#include "SegmentsTab.h"
 
 TargetIntTab::TargetIntTab(QWidget *parent) : QWidget(parent) {
   targetIntModel = new TargetIntModel(this);
@@ -78,8 +79,31 @@ TargetIntModel* TargetIntTab::getTargetIntModel() {
   return targetIntModel;
 }
 
+void TargetIntTab::setSegmentsTab(SegmentsTab* segmentsTab) {
+  segmentsTab_ = segmentsTab;
+}
+
+QSet<int> TargetIntTab::thmSegmentKeys() const {
+  // A segment key is the row number of the segment in its table. Which table
+  // it refers to depends on whether the run uses data or extrapolation
+  // segments, so a key counts as THM if the corresponding row of either table
+  // is a THM segment.
+  QSet<int> keys;
+  if(segmentsTab_.isNull()) return keys;
+  const QList<SegmentsDataData> dataLines =
+    segmentsTab_->getSegmentsDataModel()->getLines();
+  for(int i = 0; i < dataLines.size(); i++)
+    if(dataLines.at(i).isTHM==1) keys.insert(i+1);
+  const QList<SegmentsTestData> testLines =
+    segmentsTab_->getSegmentsTestModel()->getLines();
+  for(int i = 0; i < testLines.size(); i++)
+    if(testLines.at(i).isTHM==1) keys.insert(i+1);
+  return keys;
+}
+
 void TargetIntTab::addLine() {
   AddTargetIntDialog aDialog;
+  aDialog.setTHMSegmentKeys(thmSegmentKeys());
   if(aDialog.exec()) {
     TargetIntData newLine;
     newLine.isActive=1;
@@ -255,6 +279,10 @@ void TargetIntTab::editLine() {
   aDialog.stragglingCoefficientText->setText(QString::number(stragglingCoefficient));
   aDialog.resonanceWidthMultiplierSpin->setValue(resonanceWidthMultiplier > 0.0 ? resonanceWidthMultiplier : 5.0);
   aDialog.pointsPerWidthSpin->setValue(pointsPerWidth > 0.0 ? pointsPerWidth : 50.0);
+
+  // Last, so that it can clear any effect that is not available for the THM
+  // segments this line is applied to.
+  aDialog.setTHMSegmentKeys(thmSegmentKeys());
 
   if(aDialog.exec()) {
     QString newSegmentsList = aDialog.segmentsListText->text();

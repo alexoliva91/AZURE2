@@ -71,6 +71,7 @@ AZURESetup::AZURESetup() : config(std::cout) {
   segmentsTab->setPairsModel(pairsTab->getPairsModel());
 
   targetIntTab=new TargetIntTab;
+  targetIntTab->setSegmentsTab(segmentsTab);
 
   nuclearPotentialTab = new NuclearPotentialTab();
 

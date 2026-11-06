@@ -41,6 +41,13 @@ static SRIMUtilities* getSRIMUtilities() {
 
 AddTargetIntDialog::AddTargetIntDialog(QWidget *parent) : QDialog(parent), selectedElement_(13) {
   segmentsListText = new QLineEdit;
+  connect(segmentsListText,SIGNAL(textChanged(QString)),this,SLOT(segmentsListChanged(QString)));
+  thmNoticeLabel = new QLabel(tr("This effect is applied to a THM segment: only the "
+                                 "Gaussian convolution is available, since a "
+                                 "half-off-shell measurement has no beam losing "
+                                 "energy in a target."));
+  thmNoticeLabel->setWordWrap(true);
+  thmNoticeLabel->setVisible(false);
   numPointsSpin = new QSpinBox;
   numPointsSpin->setEnabled(false);
   numPointsSpin -> setMinimum(1);
@@ -307,6 +314,7 @@ AddTargetIntDialog::AddTargetIntDialog(QWidget *parent) : QDialog(parent), selec
 
   QVBoxLayout *mainLayout = new QVBoxLayout;
   mainLayout->addLayout(topLayout);
+  mainLayout->addWidget(thmNoticeLabel);
   mainLayout->addLayout(adaptiveGridLayout);
   mainLayout->addLayout(checkBoxLayout);
   mainLayout->addWidget(stoppingPowerBox);
@@ -372,6 +380,61 @@ void AddTargetIntDialog::createConvCoefficientItem(int row, double value) {
   convCoefficientTable->setItem(row,0,labelItem);
   convCoefficientTable->setItem(row,1,valueItem);
   convCoefficientTable->resizeRowsToContents();
+}
+
+void AddTargetIntDialog::setTHMSegmentKeys(const QSet<int>& keys) {
+  thmSegmentKeys_ = keys;
+  updateTHMRestrictions();
+}
+
+void AddTargetIntDialog::segmentsListChanged(const QString&) {
+  updateTHMRestrictions();
+}
+
+QSet<int> AddTargetIntDialog::parseSegmentsList(const QString& text) {
+  // Mirrors TargetEffect::GetSegmentsList(): comma separated keys, with "a-b"
+  // meaning the inclusive range from a to b.
+  QSet<int> keys;
+  int lastKey = 0;
+  bool inclusive = false;
+  int i = 0;
+  while(i < text.length()) {
+    if(text.at(i).isDigit()) {
+      QString number;
+      while(i < text.length() && text.at(i).isDigit()) number += text.at(i++);
+      int key = number.toInt();
+      if(inclusive) for(int j = lastKey+1; j <= key; j++) keys.insert(j);
+      else keys.insert(key);
+      lastKey = key;
+      continue;
+    }
+    // Only a '-' directly following a key opens a range up to the next one.
+    inclusive = (text.at(i) == QLatin1Char('-'));
+    i++;
+  }
+  return keys;
+}
+
+void AddTargetIntDialog::updateTHMRestrictions() {
+  const QSet<int> listed = parseSegmentsList(segmentsListText->text());
+  bool restricted = false;
+  for(QSet<int>::const_iterator it = listed.constBegin(); it != listed.constEnd(); ++it) {
+    if(thmSegmentKeys_.contains(*it)) {
+      restricted = true;
+      break;
+    }
+  }
+
+  thmNoticeLabel->setVisible(restricted);
+  if(restricted) {
+    // Uncheck first: the toggled() slots hide the dependent boxes for us.
+    isTargetIntegrationCheck->setChecked(false);
+    isStraggling->setChecked(false);
+    isQCoefficientCheck->setChecked(false);
+  }
+  isTargetIntegrationCheck->setEnabled(!restricted);
+  isStraggling->setEnabled(!restricted);
+  isQCoefficientCheck->setEnabled(!restricted);
 }
 
 void AddTargetIntDialog::convolutionCheckChanged(bool checked) {

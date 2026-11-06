@@ -27,14 +27,6 @@ AddSegDataDialog::AddSegDataDialog(QWidget *parent) : QDialog(parent) {
   highAngleText->setText("180");
   highAngleText->setEnabled(false);
   dataTypeCombo = new QComboBox;
-  dataTypeCombo->addItem(tr("Angle Integrated"));
-  dataTypeCombo->addItem(tr("Differential"));
-  dataTypeCombo->addItem(tr("Phase Shift"));
-  dataTypeCombo->addItem(tr("Angle Integrated Total Capture"));
-  dataTypeCombo->addItem(tr("C.M. Differential"));
-  dataTypeCombo->addItem(tr("Angle Integrated (E1 only)"));
-  dataTypeCombo->addItem(tr("Angle Integrated (E2 only)"));
-  connect(dataTypeCombo,SIGNAL(currentIndexChanged(int)),this,SLOT(dataTypeChanged(int)));
   QRegExp spinRX("^\\d{0,2}(\\.[05]{0,1})?$");
   QValidator *spinValidator = new QRegExpValidator(spinRX, this);
   phaseJValueText = new QLineEdit;
@@ -154,7 +146,7 @@ AddSegDataDialog::AddSegDataDialog(QWidget *parent) : QDialog(parent) {
   totalCaptureLabel->setVisible(false);
   pairLayout->addWidget(totalCaptureLabel,0,4);
   valueLayout->addLayout(pairLayout,0,0,1,2);
-  QGroupBox* energyBox = new QGroupBox(tr("Lab Energy [MeV]"));
+  energyBox = new QGroupBox(tr("Lab Energy [MeV]"));
   QGridLayout *energyLayout = new QGridLayout;
   energyLayout->addWidget(new QLabel(tr("Low Energy:")),0,0,Qt::AlignRight);
   energyLayout->addWidget(lowEnergyText,0,1);
@@ -288,6 +280,12 @@ AddSegDataDialog::AddSegDataDialog(QWidget *parent) : QDialog(parent) {
   connect(okButton, SIGNAL(clicked()),this,SLOT(accept()));
   connect(cancelButton,SIGNAL(clicked()),this,SLOT(reject()));
 
+  // Populate the data type combo last, once every widget dataTypeChanged()
+  // touches (phase/total-capture/angle fields) has been constructed above.
+  populateDataTypeOptions();
+  connect(dataTypeCombo,SIGNAL(currentIndexChanged(int)),this,SLOT(dataTypeChanged(int)));
+  connect(thmCheck,SIGNAL(stateChanged(int)),this,SLOT(thmCheckChanged(int)));
+
   setWindowTitle(tr("Add a Segment From Data"));
 }
 
@@ -299,7 +297,11 @@ void AddSegDataDialog::setChooseFile() {
 }
 
 void AddSegDataDialog::dataTypeChanged(int index) {
-  if(index==2) {
+  // "index" is the combo's on-screen position, which shifts as
+  // populateDataTypeOptions() shows/hides entries for the THM checkbox;
+  // the semantics below are keyed on the stable underlying isDiff code.
+  int code = dataTypeCombo->itemData(index).toInt();
+  if(code==2) {
     phaseJValueLabel->setVisible(true);
     phaseLValueLabel->setVisible(true);
     phaseJValueText->setVisible(true);
@@ -310,27 +312,87 @@ void AddSegDataDialog::dataTypeChanged(int index) {
     phaseJValueText->setVisible(false);
     phaseLValueText->setVisible(false);
   }
-  if(index==1) {
+  if(code==1) {
     lowAngleText->setEnabled(true);
     highAngleText->setEnabled(true);
   } else {
     lowAngleText->setEnabled(false);
     highAngleText->setEnabled(false);
   }
-  if(index==3) {
+  if(code==3) {
     exitPairIndexSpin->setVisible(false);
     totalCaptureLabel->setVisible(true);
   } else {
     totalCaptureLabel->setVisible(false);
     exitPairIndexSpin->setVisible(true);
   }
-  if(index==4) {
+  if(code==4) {
     lowAngleText->setEnabled(true);
     highAngleText->setEnabled(true);
   }
 
+  updateEnergyFrameLabels();
+
   // Update fixed angle visibility when data type changes
   operationTypeChanged(operationCombo->currentIndex());
+}
+
+void AddSegDataDialog::updateEnergyFrameLabels() {
+  // The low/high energy limits are matched against column 1 of the data file
+  // (ESegment::IsInSegment). For every ordinary type that column is a lab
+  // energy, but a "C.M. Angle Integrated" segment is fed c.m. energies
+  // directly and no lab->c.m. conversion is applied, so the filter window
+  // must be entered in the c.m. frame too -- and may be negative for
+  // sub-threshold THM points.
+  bool isCM = (dataTypeCombo->currentData().toInt()==7);
+  if(isCM) {
+    energyBox->setTitle(tr("C.M. Energy [MeV]"));
+    QString tip = tr("Center-of-mass energy limits used to select points from "
+                     "the data file. The file energies are already c.m.: they "
+                     "are used as given, and may be negative for sub-threshold "
+                     "(THM) points.");
+    lowEnergyText->setToolTip(tip);
+    highEnergyText->setToolTip(tip);
+  } else {
+    energyBox->setTitle(tr("Lab Energy [MeV]"));
+    QString tip = tr("Laboratory energy limits used to select points from the "
+                     "data file. The file energies are converted to the c.m. "
+                     "frame internally.");
+    lowEnergyText->setToolTip(tip);
+    highEnergyText->setToolTip(tip);
+  }
+}
+
+void AddSegDataDialog::populateDataTypeOptions() {
+  bool hadItems = dataTypeCombo->count() > 0;
+  int prevCode = hadItems ? dataTypeCombo->currentData().toInt() : 0;
+  dataTypeCombo->blockSignals(true);
+  dataTypeCombo->clear();
+  if(thmCheck->isChecked()) {
+    dataTypeCombo->addItem(tr("Angle Integrated"), 0);
+    dataTypeCombo->addItem(tr("C.M. Angle Integrated"), 7);
+  } else {
+    dataTypeCombo->addItem(tr("Angle Integrated"), 0);
+    dataTypeCombo->addItem(tr("Differential"), 1);
+    dataTypeCombo->addItem(tr("Phase Shift"), 2);
+    dataTypeCombo->addItem(tr("Angle Integrated Total Capture"), 3);
+    dataTypeCombo->addItem(tr("C.M. Differential"), 4);
+    dataTypeCombo->addItem(tr("Angle Integrated (E1 only)"), 5);
+    dataTypeCombo->addItem(tr("Angle Integrated (E2 only)"), 6);
+  }
+  int idx = hadItems ? dataTypeCombo->findData(prevCode) : 0;
+  dataTypeCombo->setCurrentIndex(idx>=0 ? idx : 0);
+  dataTypeCombo->blockSignals(false);
+  dataTypeChanged(dataTypeCombo->currentIndex());
+}
+
+void AddSegDataDialog::setDataType(int code) {
+  int idx = dataTypeCombo->findData(code);
+  dataTypeCombo->setCurrentIndex(idx>=0 ? idx : 0);
+}
+
+void AddSegDataDialog::thmCheckChanged(int) {
+  populateDataTypeOptions();
 }
 
 void AddSegDataDialog::varyNormChanged(int state) {
@@ -360,7 +422,8 @@ void AddSegDataDialog::advancedModeChanged(int state) {
 void AddSegDataDialog::operationTypeChanged(int index) {
   // Show fixed angle option only when Ratio is selected AND segment is differential
   bool isRatio = (index == 1);
-  bool isDifferential = (dataTypeCombo->currentIndex() == 1) || (dataTypeCombo->currentIndex() == 4); // Differential or CM Differential
+  int dataCode = dataTypeCombo->currentData().toInt();
+  bool isDifferential = (dataCode == 1) || (dataCode == 4); // Differential or CM Differential
 
   if(isRatio && isDifferential) {
     useFixedAngleCheck->setVisible(true);

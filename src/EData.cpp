@@ -13,6 +13,89 @@
 #include <omp.h>
 #include <time.h>
 #include <unordered_map>
+#include <cmath>
+#include <utility>
+#include <map>
+
+namespace {
+
+/*!
+ * Checks that the experimental effects requested on a target effect line are
+ * meaningful for the segment they are applied to, and prints a diagnostic if
+ * they are not.
+ *
+ * The restriction is a property of the *segment* (its THM flag), not of the
+ * observable it holds: a THM (half-off-shell) measurement has no beam slowing
+ * down in a target, because the entrance vertex is the transfer form factor
+ * rather than a real projectile. Target-thickness integration, energy
+ * straggling and the geometrical attenuation coefficients are all lab
+ * beam/detector-geometry physics and would silently feed c.m. energies into
+ * lab dE/dx tables. Only the Gaussian convolution -- constant sigma or the
+ * energy dependent form -- models something a THM experiment actually has
+ * (the resolution of the reconstructed relative energy), so it is the only
+ * effect allowed.
+ */
+bool CheckTargetEffectAllowed(const Config& configure, const ESegment& segment,
+                              const TargetEffect& targetEffect,
+                              int reportKey, bool isComponent) {
+  if(!segment.IsTHM()) return true;
+  if(!targetEffect.IsTargetIntegration() && !targetEffect.IsStraggling() &&
+     !targetEffect.IsQCoefficients()) return true;
+  configure.outStream << "ERROR: Only the Gaussian convolution is available as "
+                      << "an experimental effect for THM segments ("
+                      << (isComponent ? "component of segment key " : "segment key ")
+                      << reportKey << "): target integration, energy straggling "
+                      << "and attenuation coefficients all assume a beam losing "
+                      << "energy in a target, which a half-off-shell measurement "
+                      << "does not have. Use a convolution-only target effect."
+                      << std::endl;
+  return false;
+}
+
+/*!
+ * Rescales the resolution sigma of a target effect from the frame its segments
+ * are specified in to the c.m. frame used internally, at most once per target
+ * effect.
+ *
+ * Sigma is entered in the same frame as the segment energies: lab for the
+ * ordinary types, already c.m. for a "C.M. Angle Integrated" segment. The
+ * conversion mutates the shared TargetEffect object, so it must not be applied
+ * again for every further segment (or component) listed on the same targetInt
+ * line -- doing so shrinks sigma by an extra factor of cmConversion each time.
+ * Returns false if one target effect is shared by segments living in different
+ * frames, where no single sigma can be correct; warns if it is shared by
+ * lab-frame segments with different entrance pairs, where the single converted
+ * sigma can only be right for the first of them.
+ */
+bool ConvertTargetEffectSigma(const Config& configure, const ESegment& segment,
+                              TargetEffect* targetEffect, int targetEffectNum,
+                              double cmConversion,
+                              std::map<int,std::pair<bool,double> >& converted) {
+  bool isCMFrame = segment.IsCMAngleIntegrated();
+  std::map<int,std::pair<bool,double> >::const_iterator prev = converted.find(targetEffectNum);
+  if(prev != converted.end()) {
+    if(prev->second.first != isCMFrame) {
+      configure.outStream << "ERROR: target effect " << targetEffectNum
+                          << " is shared by segments given in different frames "
+                          << "(c.m. and lab energies): its sigma cannot be "
+                          << "interpreted in both. Split the targetInt line."
+                          << std::endl;
+      return false;
+    }
+    if(!isCMFrame && std::fabs(prev->second.second-cmConversion) > 1.0e-12)
+      configure.outStream << "WARNING: target effect " << targetEffectNum
+                          << " is shared by segments with different entrance "
+                          << "pairs; its sigma was converted to the c.m. frame "
+                          << "using the first segment's kinematics only."
+                          << std::endl;
+    return true;
+  }
+  converted[targetEffectNum] = std::make_pair(isCMFrame,cmConversion);
+  if(!isCMFrame) targetEffect->SetSigma(cmConversion*targetEffect->GetSigma());
+  return true;
+}
+
+}
 
 /*!
  * The EData object has a private attribute containing the number of iterations needed to find the best fit parameters.
@@ -275,6 +358,11 @@ int EData::MakePoints(const Config& configure, CNuc *theCNuc) {
 		EPoint *thePoint=theSegment->GetPoint(theSegment->NumPoints());
 		thePoint->SetParentData(this);
 		if(entrancePair->GetPType()==20) thePoint->ConvertDecayEnergy(exitPair);
+		/* 
+    C.M. Angle Integrated: grid energies are already c.m. (the point
+		constructor set cm = lab = energy); only fill the excitation energy.
+    */
+		else if(theSegment->IsCMAngleIntegrated()) thePoint->ConvertExcitationEnergy(entrancePair);
 		else if(!theSegment->IsCMDifferential()) thePoint->ConvertLabEnergy(entrancePair);
     else if(theSegment->IsCMDifferential()) thePoint->ConvertLabEnergy(entrancePair);
 		if(exitPair->GetPType()==0&&theSegment->IsDifferential()&&
@@ -501,6 +589,9 @@ int EData::ReadTargetEffectsFile(const Config& configure, CNuc *compound) {
     }
   }
   if(line!="</targetInt>") return -1;
+  // Frame each target effect's sigma has already been converted from, keyed on
+  // target effect number, so the conversion happens exactly once per effect.
+  std::map<int,std::pair<bool,double> > convertedSigmaFrames;
   for(ESegmentIterator segment=GetSegments().begin();segment<GetSegments().end();segment++) {
     PPair *entrancePair = compound->GetPair(compound->GetPairNumFromKey(segment->GetEntranceKey()));
     PPair *exitPair = compound->GetPair(compound->GetPairNumFromKey(segment->GetExitKey()));
@@ -510,9 +601,12 @@ int EData::ReadTargetEffectsFile(const Config& configure, CNuc *compound) {
     
     if(segment->IsTargetEffect()) {
       TargetEffect *targetEffect = this->GetTargetEffect(segment->GetTargetEffectNum());
-      double sigma = targetEffect->GetSigma();
-      targetEffect->SetSigma(cmConversion*sigma);
-      
+      if(!CheckTargetEffectAllowed(configure,*segment,*targetEffect,
+                                   segment->GetSegmentKey(),false)) return -1;
+      if(!ConvertTargetEffectSigma(configure,*segment,targetEffect,
+                                   segment->GetTargetEffectNum(),cmConversion,
+                                   convertedSigmaFrames)) return -1;
+
       for(EPointIterator point=segment->GetPoints().begin();point<segment->GetPoints().end();point++) {
 	      point->SetTargetEffectNum(segment->GetTargetEffectNum());
 	      
@@ -642,9 +736,15 @@ int EData::ReadTargetEffectsFile(const Config& configure, CNuc *compound) {
       for(auto component : segment->GetComponentSegments()) {
         if(component->IsTargetEffect()) {
           TargetEffect *targetEffect = this->GetTargetEffect(component->GetTargetEffectNum());
-          double sigma = targetEffect->GetSigma();
-          targetEffect->SetSigma(cmConversion*sigma);
-          
+          // Same rules as the parent-segment block above. Components inherit the
+          // parent's target effect number, so the sigma conversion is normally
+          // already accounted for by the parent segment.
+          if(!CheckTargetEffectAllowed(configure,*component,*targetEffect,
+                                       segment->GetSegmentKey(),true)) return -1;
+          if(!ConvertTargetEffectSigma(configure,*component,targetEffect,
+                                       component->GetTargetEffectNum(),cmConversion,
+                                       convertedSigmaFrames)) return -1;
+
           for(EPointIterator point=component->GetPoints().begin();point<component->GetPoints().end();point++) {
             point->SetTargetEffectNum(component->GetTargetEffectNum());
             
@@ -1380,7 +1480,8 @@ void EData::WriteOutputFiles(const Config &configure, bool isFit) {
                                       } else out << "Lab,";
                                   out << segment->GetMinEnergy() << ","
                                       << segment->GetMaxEnergy() << ",";
-                                      if(segment->IsCMDifferential()==true){
+                                      if(segment->IsCMDifferential()==true||
+                                         segment->IsCMAngleIntegrated()==true){
                                          out << "CM,";
                                       } else out << "Lab,";
 				  out << segment->GetNorm() << ","
@@ -1418,7 +1519,8 @@ void EData::WriteOutputFiles(const Config &configure, bool isFit) {
                                              } else out << "Lab,";
                                          out << segment->GetMinEnergy() << ","
                                              << segment->GetMaxEnergy() << ",";
-                                             if(segment->IsCMDifferential()==true){
+                                             if(segment->IsCMDifferential()==true||
+                                                segment->IsCMAngleIntegrated()==true){
                                                 out << "CM,";
                                              } else out << "Lab,";
 		 out << segment->GetNorm() << ","
@@ -1629,6 +1731,9 @@ int EData::InitializeComponentSegments(CNuc *theCNuc, const Config& configure) {
       if(entrancePair && exitPair) {
         if(entrancePair->GetPType()==20) {
           point->ConvertDecayEnergy(exitPair);
+        } else if(componentSegment.IsCMAngleIntegrated()) {
+          // grid energies already c.m.; only fill the excitation energy
+          point->ConvertExcitationEnergy(entrancePair);
         } else if(!componentSegment.IsCMDifferential()) {
           point->ConvertLabEnergy(entrancePair);
         } else if(componentSegment.IsCMDifferential()) {

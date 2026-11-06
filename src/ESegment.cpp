@@ -5,6 +5,10 @@
 #include "ESegment.h"
 #include "ExtrapLine.h"
 #include "SegLine.h"
+#include "TargetEffect.h"
+#include <atomic>
+#include <cmath>
+#include <iostream>
 
 /*!
  * This constructor is used if the segment contains actual experimental data.  The segment
@@ -31,6 +35,10 @@ ESegment::ESegment(SegLine segLine) {
   else isdifferential_=false;
   if(diff==4) iscmdifferential_=true;
   else iscmdifferential_=false;
+  // "C.M. Angle Integrated": behaves exactly like the plain angle-integrated
+  // observable (code 0) except input energies are already c.m. and are not
+  // run through the lab->c.m. conversion.
+  isCMAngleIntegrated_ = (diff==7);
   if(diff==2) {
     isphase_=true;
     j_=segLine.phaseJ();
@@ -99,6 +107,8 @@ ESegment::ESegment(ExtrapLine extrapLine) {
   else isdifferential_=false;
   if(diff==5) iscmdifferential_=true;
   else iscmdifferential_=false;
+  // "C.M. Angle Integrated" (extrapolation code 6): grid energies are c.m.
+  isCMAngleIntegrated_ = (diff==6);
   if(diff==2) {
     isphase_=true;
     j_=extrapLine.phaseJ();
@@ -181,6 +191,17 @@ bool ESegment::IsDifferential() const {
 
 bool ESegment::IsCMDifferential() const {
   return iscmdifferential_;
+}
+
+/*!
+ * Returns true if the segment is the "C.M. Angle Integrated" type (input
+ * energies already c.m.; natural for THM/HOES data, where the two-body
+ * relative energy is reconstructed from the exit-channel kinematics and no
+ * lab frame exists), otherwise returns false.
+ */
+
+bool ESegment::IsCMAngleIntegrated() const {
+  return isCMAngleIntegrated_;
 }
 
 /*!
@@ -324,9 +345,14 @@ int ESegment::Fill(CNuc *theCNuc, EData *theData, const Config& configure) {
 	this->GetPoint(this->NumPoints())->SetParentData(theData);
 	if(entrancePair->GetPType()==20) {
            this->GetPoint(this->NumPoints())->ConvertDecayEnergy(exitPair);
+        } else if (this->IsCMAngleIntegrated()) {
+          // Input energies are already c.m. (the point constructor set
+          // cm = lab = file energy; lab_energy_ deliberately aliases the c.m.
+          // value for this type) -- only the excitation energy needs filling.
+          this->GetPoint(this->NumPoints())->ConvertExcitationEnergy(entrancePair);
         } else if (this->IsCMDifferential()) {
 //          this->GetPoint(this->NumPoints())->ConvertExcitationEnergy(entrancePair);
-          this->GetPoint(this->NumPoints())->ConvertLabEnergy(entrancePair); 
+          this->GetPoint(this->NumPoints())->ConvertLabEnergy(entrancePair);
         } else if(!this->IsCMDifferential()){
           this->GetPoint(this->NumPoints())->ConvertLabEnergy(entrancePair);
         }
@@ -584,14 +610,51 @@ void ESegment::UpdatePointEnergiesWithShift(CNuc* theCNuc, const Config* configu
   // No lock needed since each thread works on independent EData clones
   // after fixing EData::Clone to properly remap component segment pointers
 
+  // For "C.M. Angle Integrated" segments the energies (and the shift) are
+  // c.m. and may legitimately be negative (THM subthreshold); the only hard
+  // limit is that the compound-system energy stays positive.
+  bool isCM = this->IsCMAngleIntegrated();
+  double minAllowedEnergy = 0.01;
+  if(isCM && theCNuc) {
+    PPair* ep = theCNuc->GetPair(theCNuc->GetPairNumFromKey(this->GetEntranceKey()));
+    if(ep) minAllowedEnergy = 0.001 - (ep->GetSepE()+ep->GetExE());
+  }
+
+  // The sub-point grid of a c.m. segment is deliberately NOT translated by the
+  // shift (see the sub-point loop below): the Gaussian centroid follows the
+  // shifted point, so a shift comparable to the resolution sigma asymmetrically
+  // truncates the +-5 sigma convolution window. Fine for calibration-level
+  // shifts; warn once if the fit drives the shift beyond sigma/2.
+  if(isCM && configure && this->IsTargetEffect() && this->IsVaryEnergyShift() &&
+     NumPoints() > 0) {
+    EData* parentData = GetPoint(1)->GetParentData();
+    TargetEffect* te = parentData ?
+      parentData->GetTargetEffect(this->GetTargetEffectNum()) : NULL;
+    if(te && te->IsConvolution() && te->GetSigma() > 0. &&
+       std::fabs(energyShift_) > 0.5*te->GetSigma()) {
+      // This runs inside the fit loop, once per chi^2 evaluation and per
+      // thread, so the warning is emitted only the first time any segment
+      // trips it.
+      static std::atomic_flag thmShiftWarned = ATOMIC_FLAG_INIT;
+      if(!thmShiftWarned.test_and_set())
+        configure->outStream << "WARNING: fitted energy shift (" << energyShift_
+                             << " MeV) in segment " << GetSegmentKey()
+                             << " exceeds half the convolution sigma ("
+                             << te->GetSigma() << " MeV); the fixed sub-point grid "
+                             << "asymmetrically truncates the smearing window. "
+                             << "(warning shown once)" << std::endl;
+    }
+  }
+
   for(int i = 0; i < NumPoints(); i++) {
     EPoint* point = GetPoint(i+1);
-    if(point && point->GetOriginalEnergy() > 0) {
+    if(point && (isCM || point->GetOriginalEnergy() > 0)) {
       double originalEnergy = point->GetOriginalEnergy();
       double shiftedEnergy = originalEnergy + energyShift_;
 
-      // Don't allow energies below 0.01 MeV (AZURE2 may crash)
-      if(shiftedEnergy < 0.01) {
+      // Don't allow energies below 0.01 MeV (AZURE2 may crash);
+      // for c.m. segments, below the compound-energy floor instead
+      if(shiftedEnergy < minAllowedEnergy) {
         /*
         std::cerr << "Warning: Energy shift in segment " << GetSegmentKey()
                   << " would result in point energy below 0.01 MeV. "
@@ -613,6 +676,11 @@ void ESegment::UpdatePointEnergiesWithShift(CNuc* theCNuc, const Config* configu
         // Apply the same conversion functions as in ESegment::Fill
         if(entrancePair->GetPType()==20) {
           point->ConvertDecayEnergy(exitPair);
+        } else if (this->IsCMAngleIntegrated()) {
+          // The shift is a c.m. quantity: update the c.m. energy directly
+          // (SetLabEnergy above only wrote the lab alias).
+          point->SetCMEnergy(shiftedEnergy);
+          point->ConvertExcitationEnergy(entrancePair);
         } else if (this->IsCMDifferential()) {
           point->ConvertLabEnergy(entrancePair);
         } else if(!this->IsCMDifferential()){
@@ -655,7 +723,17 @@ void ESegment::UpdatePointEnergiesWithShift(CNuc* theCNuc, const Config* configu
         point->RecalcEDependentValues(theCNuc,*configure);
 
         // IMPORTANT: Also apply energy shift to all subpoints (used in convolution/target integration)
-        for(int j = 1; j <= point->NumSubPoints(); j++) {
+        // ... except for C.M. Angle Integrated segments: the shift is a DATA
+        // calibration correction, and the sub-point grid samples the MODEL,
+        // whose features (e.g. eV-wide THM resonances the adaptive grid
+        // refines around) do not move. Translating the grid would drag the
+        // refined cluster off the resonance and wreck the convolution; the
+        // Gaussian centroid follows the shifted parent energy automatically
+        // in IntegrateTargetEffect, so the fixed grid computes the smeared
+        // model at the shifted energy (window edge clipped by only ~shift,
+        // negligible against the +-5 sigma window).
+        int numSubPointsToShift = isCM ? 0 : point->NumSubPoints();
+        for(int j = 1; j <= numSubPointsToShift; j++) {
           EPoint* subPoint = point->GetSubPoint(j);
           if(subPoint && subPoint->GetOriginalEnergy() > 0) {
             double subOriginalEnergy = subPoint->GetOriginalEnergy();
@@ -663,7 +741,7 @@ void ESegment::UpdatePointEnergiesWithShift(CNuc* theCNuc, const Config* configu
             double subShiftedEnergy = subOriginalEnergy + energyShiftCM;
 
             // Apply same energy limit check
-            if(subShiftedEnergy < 0.01) {
+            if(subShiftedEnergy < minAllowedEnergy) {
               continue;
             }
 
